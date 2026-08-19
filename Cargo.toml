@@ -1,0 +1,6 @@
+[package]
+name = "tznorm"
+version = "0.1.0"
+edition = "2021"
+description = "Normalizes messy timestamp strings into a consistent ISO 8601-style format."
+license = "MIT"

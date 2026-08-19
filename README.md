@@ -1,0 +1,77 @@
+# tznorm
+
+Timestamps that come out of logs, CSV exports, or hand-typed config files
+rarely agree on a format. Some use `/` for dates, some drop the leading
+zero on the month, some write the offset as `-0500`, others as `-05:00`
+or just `Z`. Sorting or diffing these lines is miserable because the same
+instant can be spelled a dozen ways.
+
+`tznorm` reads timestamp-like lines and rewrites each one into a single
+consistent shape: `YYYY-MM-DDTHH:MM:SS+HH:MM` (or `Z` for UTC). It does not
+touch anything else on the line's neighbors — it's a line-at-a-time
+formatter, meant to sit in a pipeline.
+
+## What it currently understands
+
+- Dates: `YYYY-MM-DD` or `YYYY/MM/DD`, with or without zero-padding
+  (`2024-1-5` and `2024-01-05` both work)
+- Date/time separator: `T` or one or more spaces
+- Time: `HH:MM` or `HH:MM:SS`, 24-hour clock only
+- Offsets: `Z`, `z`, `+HH:MM`, `-HHMM`, `+HH`, or any mix of those shapes
+
+Named zones (`EST`, `America/New_York`, ...) and 12-hour clock times
+(`3pm`) aren't handled yet — see the roadmap below.
+
+## Usage
+
+Build and run with cargo, no other tooling required:
+
+```sh
+cargo run --release -- data.txt
+```
+
+Multiple files are processed in order, each written to stdout:
+
+```sh
+cargo run --release -- jan.log feb.log
+```
+
+Reading from stdin works with no arguments, or with `-` mixed in among
+file arguments:
+
+```sh
+cat data.txt | cargo run --release
+tail -f app.log | cargo run --release -- -
+```
+
+### Example
+
+Input:
+
+```
+2024-1-5T09:30:00-0500
+2024/01/05 09:30:00 -05:00
+2024-01-05T14:30:00Z
+```
+
+Output:
+
+```
+2024-01-05T09:30:00-05:00
+2024-01-05T09:30:00-05:00
+2024-01-05T14:30:00Z
+```
+
+Lines that don't match a recognized shape are reported on stderr with
+their source and line number, and don't stop the rest of the input from
+being processed. If any line failed to parse, the process exits with
+status 1.
+
+## Roadmap
+
+- [ ] Recognize common zone abbreviations (EST, PST, CET, ...) with a
+      fixed offset table
+- [ ] Parse month-name dates (`Jan 5 2024`, `5 January 2024`)
+- [ ] Add a `--to-utc` flag that converts every offset to `Z`
+- [ ] Support 12-hour clock times with am/pm
+- [ ] Add an `--output` flag to write to a file instead of stdout
