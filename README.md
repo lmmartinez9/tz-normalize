@@ -18,9 +18,14 @@ formatter, meant to sit in a pipeline.
 - Date/time separator: `T` or one or more spaces
 - Time: `HH:MM` or `HH:MM:SS`, 24-hour clock only
 - Offsets: `Z`, `z`, `+HH:MM`, `-HHMM`, `+HH`, or any mix of those shapes
+- Common zone abbreviations (`EST`, `PST`, `CET`, `JST`, `IST`, ...),
+  looked up in a fixed offset table and rewritten as a numeric offset
 
-Named zones (`EST`, `America/New_York`, ...) and 12-hour clock times
-(`3pm`) aren't handled yet — see the roadmap below.
+Abbreviations are matched against a single fixed offset each, with no DST
+rules and no attempt to disambiguate names that mean different things in
+different places (`IST` is read as India Standard Time, for example).
+IANA zone names (`America/New_York`) and 12-hour clock times (`3pm`) aren't
+handled yet — see the roadmap below.
 
 ## Usage
 
@@ -69,7 +74,7 @@ status 1.
 
 ## Roadmap
 
-- [ ] Recognize common zone abbreviations (EST, PST, CET, ...) with a
+- [x] Recognize common zone abbreviations (EST, PST, CET, ...) with a
       fixed offset table
 - [ ] Parse month-name dates (`Jan 5 2024`, `5 January 2024`)
 - [ ] Add a `--to-utc` flag that converts every offset to `Z`

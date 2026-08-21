@@ -71,8 +71,9 @@ fn parse_timestamp(line: &str) -> Result<Timestamp, ParseError> {
     }
 
     // A 24-hour clock only ever contains digits and colons, so the first
-    // sign or zone letter marks the start of the offset.
-    let offset_idx = rest.find(|c: char| matches!(c, 'Z' | 'z' | '+' | '-'));
+    // sign or zone letter (numeric offset or named abbreviation) marks the
+    // start of the offset.
+    let offset_idx = rest.find(|c: char| matches!(c, 'Z' | 'z' | '+' | '-') || c.is_ascii_alphabetic());
     let (time_part, offset_part) = match offset_idx {
         Some(i) => (rest[..i].trim(), Some(rest[i..].trim())),
         None => (rest.trim(), None),
@@ -153,9 +154,45 @@ fn parse_time(s: &str) -> Result<Time, ParseError> {
     })
 }
 
+/// Fixed UTC offset, in minutes, for common zone abbreviations. These are
+/// not real timezones (no DST rules, no political history) - just the
+/// single offset each abbreviation is conventionally used to mean. Where an
+/// abbreviation is genuinely ambiguous (AST, IST, ...) this picks the most
+/// common reading rather than trying to guess from context.
+fn zone_offset_minutes(name: &str) -> Option<i32> {
+    let minutes = match name {
+        "UTC" | "GMT" | "WET" => 0,
+        "BST" | "CET" | "WEST" => 60,
+        "CEST" | "EET" => 120,
+        "EEST" | "MSK" => 180,
+        "IST" => 330,
+        "JST" | "KST" => 540,
+        "AWST" => 480,
+        "ACST" => 570,
+        "ACDT" => 630,
+        "AEST" => 600,
+        "AEDT" => 660,
+        "NZST" => 720,
+        "NZDT" => 780,
+        "NST" => -210,
+        "AST" | "EDT" => -240,
+        "EST" | "CDT" => -300,
+        "CST" | "MDT" => -360,
+        "MST" | "PDT" => -420,
+        "PST" => -480,
+        _ => return None,
+    };
+    Some(minutes)
+}
+
 fn parse_offset(s: &str) -> Result<i32, ParseError> {
     if s.eq_ignore_ascii_case("z") {
         return Ok(0);
+    }
+
+    if s.chars().all(|c| c.is_ascii_alphabetic()) {
+        return zone_offset_minutes(&s.to_ascii_uppercase())
+            .ok_or_else(|| ParseError::BadOffset(s.to_string()));
     }
 
     let bytes = s.as_bytes();
@@ -277,5 +314,42 @@ mod tests {
     #[test]
     fn unrecognized_date_is_an_error() {
         assert!(normalize_line("Jan 5 2024").is_err());
+    }
+
+    #[test]
+    fn zone_abbreviation_is_converted_to_fixed_offset() {
+        assert_eq!(
+            normalize_line("2024-01-05T09:30:00 EST").unwrap(),
+            "2024-01-05T09:30:00-05:00"
+        );
+    }
+
+    #[test]
+    fn zone_abbreviation_without_separating_space() {
+        assert_eq!(
+            normalize_line("2024-01-05T09:30:00PST").unwrap(),
+            "2024-01-05T09:30:00-08:00"
+        );
+    }
+
+    #[test]
+    fn zone_abbreviation_is_case_insensitive() {
+        assert_eq!(
+            normalize_line("2024-01-05T09:30:00 jst").unwrap(),
+            "2024-01-05T09:30:00+09:00"
+        );
+    }
+
+    #[test]
+    fn half_hour_zone_abbreviation() {
+        assert_eq!(
+            normalize_line("2024-01-05T09:30:00 IST").unwrap(),
+            "2024-01-05T09:30:00+05:30"
+        );
+    }
+
+    #[test]
+    fn unknown_zone_abbreviation_is_an_error() {
+        assert!(normalize_line("2024-01-05T09:30:00 XYZ").is_err());
     }
 }
