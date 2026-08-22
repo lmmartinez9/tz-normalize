@@ -15,6 +15,9 @@ formatter, meant to sit in a pipeline.
 
 - Dates: `YYYY-MM-DD` or `YYYY/MM/DD`, with or without zero-padding
   (`2024-1-5` and `2024-01-05` both work)
+- Dates with a month name, in either order (`Jan 5 2024`,
+  `5 January 2024`, `January 5, 2024`), full names or three-letter
+  abbreviations, case-insensitive
 - Date/time separator: `T` or one or more spaces
 - Time: `HH:MM` or `HH:MM:SS`, 24-hour clock only
 - Offsets: `Z`, `z`, `+HH:MM`, `-HHMM`, `+HH`, or any mix of those shapes
@@ -26,6 +29,10 @@ rules and no attempt to disambiguate names that mean different things in
 different places (`IST` is read as India Standard Time, for example).
 IANA zone names (`America/New_York`) and 12-hour clock times (`3pm`) aren't
 handled yet — see the roadmap below.
+
+Month-name dates only recognize a plain day number (no "5th" or "05th"),
+and check that the day falls in `1..=31` the same way numeric dates do —
+they don't validate against the actual length of the given month.
 
 ## Usage
 
@@ -76,7 +83,7 @@ status 1.
 
 - [x] Recognize common zone abbreviations (EST, PST, CET, ...) with a
       fixed offset table
-- [ ] Parse month-name dates (`Jan 5 2024`, `5 January 2024`)
+- [x] Parse month-name dates (`Jan 5 2024`, `5 January 2024`)
 - [ ] Add a `--to-utc` flag that converts every offset to `Z`
 - [ ] Support 12-hour clock times with am/pm
 - [ ] Add an `--output` flag to write to a file instead of stdout

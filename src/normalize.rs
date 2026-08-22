@@ -53,14 +53,20 @@ fn parse_timestamp(line: &str) -> Result<Timestamp, ParseError> {
     }
 
     // The date and time portions are split on the first 'T' or run of
-    // whitespace; everything before that has to be the date.
+    // whitespace; everything before that has to be the date. Month-name
+    // dates ("Jan 5 2024") span more than one word, so if the numeric
+    // parser rejects that first word, fall back to scanning the whole
+    // line for a month name instead.
     let split_idx = s.find(|c: char| c == 'T' || c.is_whitespace());
     let (date_part, rest) = match split_idx {
         Some(i) => (&s[..i], s[i + 1..].trim_start()),
         None => (s, ""),
     };
 
-    let date = parse_date(date_part)?;
+    let (date, rest) = match parse_date(date_part) {
+        Ok(date) => (date, rest),
+        Err(_) => parse_month_name_date(s)?,
+    };
 
     if rest.is_empty() {
         return Ok(Timestamp {
@@ -121,6 +127,64 @@ fn parse_date(s: &str) -> Result<Date, ParseError> {
     }
 
     Ok(Date { year, month, day })
+}
+
+/// Splits a leading whitespace-delimited word off `s`, returning it and the
+/// (trimmed-at-the-front) remainder.
+fn take_word(s: &str) -> (&str, &str) {
+    let s = s.trim_start();
+    match s.find(char::is_whitespace) {
+        Some(i) => (&s[..i], &s[i + 1..]),
+        None => (s, ""),
+    }
+}
+
+fn month_number(word: &str) -> Option<u32> {
+    let n = match word.to_ascii_lowercase().as_str() {
+        "jan" | "january" => 1,
+        "feb" | "february" => 2,
+        "mar" | "march" => 3,
+        "apr" | "april" => 4,
+        "may" => 5,
+        "jun" | "june" => 6,
+        "jul" | "july" => 7,
+        "aug" | "august" => 8,
+        "sep" | "sept" | "september" => 9,
+        "oct" | "october" => 10,
+        "nov" | "november" => 11,
+        "dec" | "december" => 12,
+        _ => return None,
+    };
+    Some(n)
+}
+
+/// Parses a date spelled with a month name at the start of `s`, in either
+/// "Month Day Year" or "Day Month Year" order, an optional comma after the
+/// day, and returns the leftover of `s` (the time portion, if any).
+fn parse_month_name_date(s: &str) -> Result<(Date, &str), ParseError> {
+    let (w1, r1) = take_word(s);
+    let (w2, r2) = take_word(r1);
+    let (w3, r3) = take_word(r2);
+
+    let attempt = |month: Option<u32>, day_word: &str, year_word: &str| -> Option<Date> {
+        let month = month?;
+        let day = day_word.trim_end_matches(',').parse::<u32>().ok()?;
+        let year = year_word.parse::<u32>().ok()?;
+        if (1..=31).contains(&day) {
+            Some(Date { year, month, day })
+        } else {
+            None
+        }
+    };
+
+    if let Some(date) = attempt(month_number(w1), w2, w3) {
+        return Ok((date, r3));
+    }
+    if let Some(date) = attempt(month_number(w2), w1, w3) {
+        return Ok((date, r3));
+    }
+
+    Err(ParseError::BadDate(s.to_string()))
 }
 
 fn parse_time(s: &str) -> Result<Time, ParseError> {
@@ -313,7 +377,40 @@ mod tests {
 
     #[test]
     fn unrecognized_date_is_an_error() {
-        assert!(normalize_line("Jan 5 2024").is_err());
+        assert!(normalize_line("Nowhere 5 2024").is_err());
+    }
+
+    #[test]
+    fn month_name_then_day_and_year() {
+        assert_eq!(normalize_line("Jan 5 2024").unwrap(), "2024-01-05");
+    }
+
+    #[test]
+    fn day_then_month_name_and_year() {
+        assert_eq!(normalize_line("5 January 2024").unwrap(), "2024-01-05");
+    }
+
+    #[test]
+    fn month_name_date_with_comma_after_day() {
+        assert_eq!(normalize_line("January 5, 2024").unwrap(), "2024-01-05");
+    }
+
+    #[test]
+    fn month_name_is_case_insensitive() {
+        assert_eq!(normalize_line("jan 5 2024").unwrap(), "2024-01-05");
+    }
+
+    #[test]
+    fn month_name_date_with_time_and_offset() {
+        assert_eq!(
+            normalize_line("Jan 5 2024 09:30:00Z").unwrap(),
+            "2024-01-05T09:30:00Z"
+        );
+    }
+
+    #[test]
+    fn unrecognized_month_name_is_an_error() {
+        assert!(normalize_line("Foo 5 2024").is_err());
     }
 
     #[test]
