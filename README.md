@@ -56,6 +56,21 @@ cat data.txt | cargo run --release
 tail -f app.log | cargo run --release -- -
 ```
 
+Pass `--to-utc` to shift every timestamp that carries a known, non-zero
+offset (numeric or a recognized zone abbreviation) so it reads as `Z`
+instead. Lines with no time, or a time with no offset at all, have nothing
+to shift by and pass through unchanged:
+
+```sh
+cargo run --release -- --to-utc data.txt
+```
+
+```
+2024-01-05T09:30:00-05:00  ->  2024-01-05T14:30:00Z
+2024-01-05T23:30:00 PST    ->  2024-01-06T07:30:00Z
+2024-01-05                 ->  2024-01-05
+```
+
 ### Example
 
 Input:
@@ -84,6 +99,6 @@ status 1.
 - [x] Recognize common zone abbreviations (EST, PST, CET, ...) with a
       fixed offset table
 - [x] Parse month-name dates (`Jan 5 2024`, `5 January 2024`)
-- [ ] Add a `--to-utc` flag that converts every offset to `Z`
+- [x] Add a `--to-utc` flag that converts every offset to `Z`
 - [ ] Support 12-hour clock times with am/pm
 - [ ] Add an `--output` flag to write to a file instead of stdout

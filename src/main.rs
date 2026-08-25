@@ -6,24 +6,39 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::process;
 
 fn main() {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let mut to_utc = false;
+    let mut paths: Vec<String> = Vec::new();
+    for arg in env::args().skip(1) {
+        if arg == "--to-utc" {
+            to_utc = true;
+        } else {
+            paths.push(arg);
+        }
+    }
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let mut error_count = 0usize;
 
-    if args.is_empty() {
+    if paths.is_empty() {
         let stdin = io::stdin();
-        process_reader(stdin.lock(), "stdin", &mut out, &mut error_count);
+        process_reader(stdin.lock(), "stdin", to_utc, &mut out, &mut error_count);
     } else {
-        for path in &args {
+        for path in &paths {
             if path == "-" {
                 let stdin = io::stdin();
-                process_reader(stdin.lock(), "stdin", &mut out, &mut error_count);
+                process_reader(stdin.lock(), "stdin", to_utc, &mut out, &mut error_count);
                 continue;
             }
 
             match File::open(path) {
-                Ok(file) => process_reader(BufReader::new(file), path, &mut out, &mut error_count),
+                Ok(file) => process_reader(
+                    BufReader::new(file),
+                    path,
+                    to_utc,
+                    &mut out,
+                    &mut error_count,
+                ),
                 Err(e) => {
                     eprintln!("{}: {}", path, e);
                     error_count += 1;
@@ -40,6 +55,7 @@ fn main() {
 fn process_reader<R: BufRead, W: Write>(
     reader: R,
     source: &str,
+    to_utc: bool,
     out: &mut W,
     error_count: &mut usize,
 ) {
@@ -58,7 +74,13 @@ fn process_reader<R: BufRead, W: Write>(
             continue;
         }
 
-        match normalize::normalize_line(&line) {
+        let result = if to_utc {
+            normalize::normalize_line_to_utc(&line)
+        } else {
+            normalize::normalize_line(&line)
+        };
+
+        match result {
             Ok(normalized) => {
                 let _ = writeln!(out, "{}", normalized);
             }

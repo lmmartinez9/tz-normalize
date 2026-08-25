@@ -46,6 +46,14 @@ pub fn normalize_line(line: &str) -> Result<String, ParseError> {
     Ok(format_timestamp(&ts))
 }
 
+/// Like `normalize_line`, but also shifts the timestamp to UTC (offset `Z`)
+/// whenever it carries a known, non-zero offset. Lines with no time, or a
+/// time with no offset, have nothing to shift by and pass through unchanged.
+pub fn normalize_line_to_utc(line: &str) -> Result<String, ParseError> {
+    let ts = parse_timestamp(line)?;
+    Ok(format_timestamp(&shift_to_utc(ts)))
+}
+
 fn parse_timestamp(line: &str) -> Result<Timestamp, ParseError> {
     let s = line.trim();
     if s.is_empty() {
@@ -300,6 +308,71 @@ fn parse_offset(s: &str) -> Result<i32, ParseError> {
     Ok(sign * (hour * 60 + minute))
 }
 
+/// Days since 1970-01-01 for a given proleptic Gregorian date. Howard
+/// Hinnant's `days_from_civil` algorithm - handles leap years (including the
+/// 100/400 exceptions) without a lookup table.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400; // [0, 399]
+    let mp = (m + 9) % 12; // [0, 11]
+    let doy = (153 * mp + 2) / 5 + d - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146097 + doe - 719468
+}
+
+/// Inverse of `days_from_civil`.
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+/// Shifts a timestamp's date/time by its offset so that the offset becomes
+/// zero, then reports it as `Z`. Timestamps with no time, or a time with no
+/// known offset, have nothing to shift by and are returned unchanged.
+fn shift_to_utc(ts: Timestamp) -> Timestamp {
+    let offset = match ts.offset_minutes {
+        Some(o) if o != 0 => o,
+        _ => return ts,
+    };
+    let time = match &ts.time {
+        Some(t) => t,
+        None => return ts,
+    };
+
+    let days = days_from_civil(ts.date.year as i64, ts.date.month as i64, ts.date.day as i64);
+    let local_seconds =
+        days * 86400 + time.hour as i64 * 3600 + time.minute as i64 * 60 + time.second as i64;
+    let utc_seconds = local_seconds - offset as i64 * 60;
+
+    let utc_days = utc_seconds.div_euclid(86400);
+    let seconds_of_day = utc_seconds.rem_euclid(86400);
+    let (year, month, day) = civil_from_days(utc_days);
+
+    Timestamp {
+        date: Date {
+            year: year as u32,
+            month: month as u32,
+            day: day as u32,
+        },
+        time: Some(Time {
+            hour: (seconds_of_day / 3600) as u32,
+            minute: (seconds_of_day % 3600 / 60) as u32,
+            second: (seconds_of_day % 60) as u32,
+        }),
+        offset_minutes: Some(0),
+    }
+}
+
 fn format_timestamp(ts: &Timestamp) -> String {
     let mut out = format!("{:04}-{:02}-{:02}", ts.date.year, ts.date.month, ts.date.day);
 
@@ -448,5 +521,74 @@ mod tests {
     #[test]
     fn unknown_zone_abbreviation_is_an_error() {
         assert!(normalize_line("2024-01-05T09:30:00 XYZ").is_err());
+    }
+
+    #[test]
+    fn to_utc_shifts_negative_offset_forward() {
+        assert_eq!(
+            normalize_line_to_utc("2024-01-05T09:30:00-05:00").unwrap(),
+            "2024-01-05T14:30:00Z"
+        );
+    }
+
+    #[test]
+    fn to_utc_shifts_positive_offset_backward() {
+        assert_eq!(
+            normalize_line_to_utc("2024-01-05T09:30:00+05:30").unwrap(),
+            "2024-01-05T04:00:00Z"
+        );
+    }
+
+    #[test]
+    fn to_utc_rolls_over_to_the_next_day() {
+        assert_eq!(
+            normalize_line_to_utc("2024-01-05T23:30:00-05:00").unwrap(),
+            "2024-01-06T04:30:00Z"
+        );
+    }
+
+    #[test]
+    fn to_utc_rolls_back_across_a_year_boundary() {
+        assert_eq!(
+            normalize_line_to_utc("2024-01-01T00:30:00+05:00").unwrap(),
+            "2023-12-31T19:30:00Z"
+        );
+    }
+
+    #[test]
+    fn to_utc_rolls_over_a_leap_day() {
+        assert_eq!(
+            normalize_line_to_utc("2024-02-29T23:00:00-02:00").unwrap(),
+            "2024-03-01T01:00:00Z"
+        );
+    }
+
+    #[test]
+    fn to_utc_leaves_already_utc_timestamps_alone() {
+        assert_eq!(
+            normalize_line_to_utc("2024-01-05T09:30:00Z").unwrap(),
+            "2024-01-05T09:30:00Z"
+        );
+    }
+
+    #[test]
+    fn to_utc_leaves_date_only_lines_alone() {
+        assert_eq!(normalize_line_to_utc("2024-01-05").unwrap(), "2024-01-05");
+    }
+
+    #[test]
+    fn to_utc_leaves_offsetless_times_alone() {
+        assert_eq!(
+            normalize_line_to_utc("2024-01-05T09:30:00").unwrap(),
+            "2024-01-05T09:30:00"
+        );
+    }
+
+    #[test]
+    fn to_utc_converts_zone_abbreviations_too() {
+        assert_eq!(
+            normalize_line_to_utc("2024-01-05T09:30:00 JST").unwrap(),
+            "2024-01-05T00:30:00Z"
+        );
     }
 }
