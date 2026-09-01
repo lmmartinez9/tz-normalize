@@ -84,16 +84,21 @@ fn parse_timestamp(line: &str) -> Result<Timestamp, ParseError> {
         });
     }
 
-    // A 24-hour clock only ever contains digits and colons, so the first
-    // sign or zone letter (numeric offset or named abbreviation) marks the
-    // start of the offset.
+    // A bare 24-hour clock only ever contains digits and colons, so the
+    // first sign or letter (an am/pm marker, or a numeric/named offset)
+    // marks the end of the time.
     let offset_idx = rest.find(|c: char| matches!(c, 'Z' | 'z' | '+' | '-') || c.is_ascii_alphabetic());
-    let (time_part, offset_part) = match offset_idx {
+    let (time_part, after_time) = match offset_idx {
         Some(i) => (rest[..i].trim(), Some(rest[i..].trim())),
         None => (rest.trim(), None),
     };
 
-    let time = parse_time(time_part)?;
+    let (meridiem, offset_part) = match after_time {
+        Some(s) => take_meridiem(s),
+        None => (None, None),
+    };
+
+    let time = parse_time(time_part, meridiem)?;
     let offset_minutes = match offset_part {
         Some(o) => Some(parse_offset(o)?),
         None => None,
@@ -195,13 +200,27 @@ fn parse_month_name_date(s: &str) -> Result<(Date, &str), ParseError> {
     Err(ParseError::BadDate(s.to_string()))
 }
 
-fn parse_time(s: &str) -> Result<Time, ParseError> {
+/// Strips a leading "am"/"pm" (or "a.m."/"p.m.") marker off `s`, returning
+/// whether it was PM and whatever text followed (trimmed), which is the
+/// offset if one was present. `s` is assumed non-empty and already trimmed.
+fn take_meridiem(s: &str) -> (Option<bool>, Option<&str>) {
+    let lower = s.to_ascii_lowercase();
+    for (marker, is_pm) in [("a.m.", false), ("p.m.", true), ("am", false), ("pm", true)] {
+        if lower.starts_with(marker) {
+            let rest = s[marker.len()..].trim_start();
+            return (Some(is_pm), if rest.is_empty() { None } else { Some(rest) });
+        }
+    }
+    (None, Some(s))
+}
+
+fn parse_time(s: &str, meridiem: Option<bool>) -> Result<Time, ParseError> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() < 2 || parts.len() > 3 {
         return Err(ParseError::BadTime(s.to_string()));
     }
 
-    let hour = parts[0]
+    let mut hour = parts[0]
         .parse::<u32>()
         .map_err(|_| ParseError::BadTime(s.to_string()))?;
     let minute = parts[1]
@@ -215,8 +234,27 @@ fn parse_time(s: &str) -> Result<Time, ParseError> {
         0
     };
 
-    if hour > 23 || minute > 59 || second > 59 {
+    if minute > 59 || second > 59 {
         return Err(ParseError::BadTime(s.to_string()));
+    }
+
+    match meridiem {
+        Some(is_pm) => {
+            if !(1..=12).contains(&hour) {
+                return Err(ParseError::BadTime(s.to_string()));
+            }
+            hour = match (hour, is_pm) {
+                (12, false) => 0,
+                (12, true) => 12,
+                (h, true) => h + 12,
+                (h, false) => h,
+            };
+        }
+        None => {
+            if hour > 23 {
+                return Err(ParseError::BadTime(s.to_string()));
+            }
+        }
     }
 
     Ok(Time {
@@ -589,6 +627,88 @@ mod tests {
         assert_eq!(
             normalize_line_to_utc("2024-01-05T09:30:00 JST").unwrap(),
             "2024-01-05T00:30:00Z"
+        );
+    }
+
+    #[test]
+    fn twelve_hour_pm_adds_twelve_hours() {
+        assert_eq!(
+            normalize_line("2024-01-05 9:30:00 PM").unwrap(),
+            "2024-01-05T21:30:00"
+        );
+    }
+
+    #[test]
+    fn twelve_hour_am_is_left_alone() {
+        assert_eq!(
+            normalize_line("2024-01-05 9:30:00 AM").unwrap(),
+            "2024-01-05T09:30:00"
+        );
+    }
+
+    #[test]
+    fn twelve_pm_is_noon() {
+        assert_eq!(
+            normalize_line("2024-01-05 12:00:00 PM").unwrap(),
+            "2024-01-05T12:00:00"
+        );
+    }
+
+    #[test]
+    fn twelve_am_is_midnight() {
+        assert_eq!(
+            normalize_line("2024-01-05 12:30:00 AM").unwrap(),
+            "2024-01-05T00:30:00"
+        );
+    }
+
+    #[test]
+    fn meridiem_is_case_insensitive_and_needs_no_space() {
+        assert_eq!(
+            normalize_line("2024-01-05T9:05:00am").unwrap(),
+            "2024-01-05T09:05:00"
+        );
+    }
+
+    #[test]
+    fn meridiem_with_dots() {
+        assert_eq!(
+            normalize_line("2024-01-05 9:05:00 p.m.").unwrap(),
+            "2024-01-05T21:05:00"
+        );
+    }
+
+    #[test]
+    fn meridiem_and_offset_together() {
+        assert_eq!(
+            normalize_line("2024-01-05T9:30:00PM-0500").unwrap(),
+            "2024-01-05T21:30:00-05:00"
+        );
+    }
+
+    #[test]
+    fn meridiem_and_zone_abbreviation_together() {
+        assert_eq!(
+            normalize_line("2024-01-05 9:30:00 PM EST").unwrap(),
+            "2024-01-05T21:30:00-05:00"
+        );
+    }
+
+    #[test]
+    fn zero_hour_with_meridiem_is_an_error() {
+        assert!(normalize_line("2024-01-05T0:30:00 AM").is_err());
+    }
+
+    #[test]
+    fn thirteen_hour_with_meridiem_is_an_error() {
+        assert!(normalize_line("2024-01-05T13:30:00 PM").is_err());
+    }
+
+    #[test]
+    fn to_utc_shifts_a_twelve_hour_time() {
+        assert_eq!(
+            normalize_line_to_utc("2024-01-05T9:30:00 PM -05:00").unwrap(),
+            "2024-01-06T02:30:00Z"
         );
     }
 }

@@ -19,7 +19,8 @@ formatter, meant to sit in a pipeline.
   `5 January 2024`, `January 5, 2024`), full names or three-letter
   abbreviations, case-insensitive
 - Date/time separator: `T` or one or more spaces
-- Time: `HH:MM` or `HH:MM:SS`, 24-hour clock only
+- Time: `HH:MM` or `HH:MM:SS`, either 24-hour or 12-hour with an `am`/`pm`
+  marker (`am`, `PM`, `a.m.`, `P.M.`, with or without a space before it)
 - Offsets: `Z`, `z`, `+HH:MM`, `-HHMM`, `+HH`, or any mix of those shapes
 - Common zone abbreviations (`EST`, `PST`, `CET`, `JST`, `IST`, ...),
   looked up in a fixed offset table and rewritten as a numeric offset
@@ -27,8 +28,8 @@ formatter, meant to sit in a pipeline.
 Abbreviations are matched against a single fixed offset each, with no DST
 rules and no attempt to disambiguate names that mean different things in
 different places (`IST` is read as India Standard Time, for example).
-IANA zone names (`America/New_York`) and 12-hour clock times (`3pm`) aren't
-handled yet — see the roadmap below.
+IANA zone names (`America/New_York`) aren't handled yet — see the roadmap
+below.
 
 Month-name dates only recognize a plain day number (no "5th" or "05th"),
 and check that the day falls in `1..=31` the same way numeric dates do —
@@ -100,5 +101,5 @@ status 1.
       fixed offset table
 - [x] Parse month-name dates (`Jan 5 2024`, `5 January 2024`)
 - [x] Add a `--to-utc` flag that converts every offset to `Z`
-- [ ] Support 12-hour clock times with am/pm
+- [x] Support 12-hour clock times with am/pm
 - [ ] Add an `--output` flag to write to a file instead of stdout
