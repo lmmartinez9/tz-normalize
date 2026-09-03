@@ -72,6 +72,14 @@ cargo run --release -- --to-utc data.txt
 2024-01-05                 ->  2024-01-05
 ```
 
+Pass `--output <path>` (or `--output=<path>`) to write normalized lines to a
+file instead of stdout. Error and warning messages still go to stderr either
+way:
+
+```sh
+cargo run --release -- --output normalized.txt data.txt
+```
+
 ### Example
 
 Input:
@@ -102,4 +110,4 @@ status 1.
 - [x] Parse month-name dates (`Jan 5 2024`, `5 January 2024`)
 - [x] Add a `--to-utc` flag that converts every offset to `Z`
 - [x] Support 12-hour clock times with am/pm
-- [ ] Add an `--output` flag to write to a file instead of stdout
+- [x] Add an `--output` flag to write to a file instead of stdout

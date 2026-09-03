@@ -7,17 +7,37 @@ use std::process;
 
 fn main() {
     let mut to_utc = false;
+    let mut output_path: Option<String> = None;
     let mut paths: Vec<String> = Vec::new();
-    for arg in env::args().skip(1) {
+    let mut args = env::args().skip(1);
+    while let Some(arg) = args.next() {
         if arg == "--to-utc" {
             to_utc = true;
+        } else if arg == "--output" {
+            match args.next() {
+                Some(path) => output_path = Some(path),
+                None => {
+                    eprintln!("--output requires a file path");
+                    process::exit(1);
+                }
+            }
+        } else if let Some(path) = arg.strip_prefix("--output=") {
+            output_path = Some(path.to_string());
         } else {
             paths.push(arg);
         }
     }
 
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
+    let mut out: Box<dyn Write> = match &output_path {
+        Some(path) => match File::create(path) {
+            Ok(file) => Box::new(file),
+            Err(e) => {
+                eprintln!("{}: {}", path, e);
+                process::exit(1);
+            }
+        },
+        None => Box::new(io::stdout()),
+    };
     let mut error_count = 0usize;
 
     if paths.is_empty() {
