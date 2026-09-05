@@ -24,12 +24,17 @@ formatter, meant to sit in a pipeline.
 - Offsets: `Z`, `z`, `+HH:MM`, `-HHMM`, `+HH`, or any mix of those shapes
 - Common zone abbreviations (`EST`, `PST`, `CET`, `JST`, `IST`, ...),
   looked up in a fixed offset table and rewritten as a numeric offset
+- A handful of common IANA zone names (`America/New_York`,
+  `Europe/Paris`, `Asia/Kolkata`, ...), matched case-insensitively against
+  the same kind of fixed offset table
 
-Abbreviations are matched against a single fixed offset each, with no DST
-rules and no attempt to disambiguate names that mean different things in
-different places (`IST` is read as India Standard Time, for example).
-IANA zone names (`America/New_York`) aren't handled yet — see the roadmap
-below.
+Abbreviations and IANA names are both matched against a single fixed offset
+each, with no DST rules and no attempt to disambiguate names that mean
+different things in different places (`IST` is read as India Standard Time,
+for example). A zone name that observes daylight saving reads as its
+standard-time offset year-round; there's no calendar of DST transition
+dates behind it. Only the zone names in the built-in table are recognized —
+anything else is reported as an unrecognized offset.
 
 Month-name dates only recognize a plain day number (no "5th" or "05th"),
 and check that the day falls in `1..=31` the same way numeric dates do —
@@ -111,3 +116,4 @@ status 1.
 - [x] Add a `--to-utc` flag that converts every offset to `Z`
 - [x] Support 12-hour clock times with am/pm
 - [x] Add an `--output` flag to write to a file instead of stdout
+- [x] Support IANA zone names like `America/New_York`

@@ -203,13 +203,23 @@ fn parse_month_name_date(s: &str) -> Result<(Date, &str), ParseError> {
 /// Strips a leading "am"/"pm" (or "a.m."/"p.m.") marker off `s`, returning
 /// whether it was PM and whatever text followed (trimmed), which is the
 /// offset if one was present. `s` is assumed non-empty and already trimmed.
+///
+/// A marker only counts if it ends at a word boundary, so an IANA zone name
+/// like "America/New_York" isn't misread as starting with "am".
 fn take_meridiem(s: &str) -> (Option<bool>, Option<&str>) {
     let lower = s.to_ascii_lowercase();
     for (marker, is_pm) in [("a.m.", false), ("p.m.", true), ("am", false), ("pm", true)] {
-        if lower.starts_with(marker) {
-            let rest = s[marker.len()..].trim_start();
-            return (Some(is_pm), if rest.is_empty() { None } else { Some(rest) });
+        if !lower.starts_with(marker) {
+            continue;
         }
+        let boundary_ok = lower.as_bytes()[marker.len()..]
+            .first()
+            .map_or(true, |b| !b.is_ascii_alphabetic());
+        if !boundary_ok {
+            continue;
+        }
+        let rest = s[marker.len()..].trim_start();
+        return (Some(is_pm), if rest.is_empty() { None } else { Some(rest) });
     }
     (None, Some(s))
 }
@@ -295,9 +305,52 @@ fn zone_offset_minutes(name: &str) -> Option<i32> {
     Some(minutes)
 }
 
+/// Fixed UTC offset, in minutes, for a handful of common IANA zone names
+/// (`Continent/City`). Like `zone_offset_minutes`, this is the zone's
+/// standard-time offset only - there's no historical DST calendar here, so a
+/// name that observes DST reads as its winter offset year-round.
+fn iana_offset_minutes(name: &str) -> Option<i32> {
+    let minutes = match name {
+        "america/new_york" => -300,
+        "america/chicago" => -360,
+        "america/denver" => -420,
+        "america/phoenix" => -420,
+        "america/los_angeles" => -480,
+        "america/anchorage" => -540,
+        "america/sao_paulo" => -180,
+        "europe/london" => 0,
+        "europe/dublin" => 0,
+        "europe/lisbon" => 0,
+        "europe/paris" => 60,
+        "europe/berlin" => 60,
+        "europe/madrid" => 60,
+        "europe/rome" => 60,
+        "europe/athens" => 120,
+        "europe/moscow" => 180,
+        "africa/cairo" => 120,
+        "africa/johannesburg" => 120,
+        "asia/dubai" => 240,
+        "asia/kolkata" => 330,
+        "asia/shanghai" => 480,
+        "asia/singapore" => 480,
+        "asia/tokyo" => 540,
+        "asia/seoul" => 540,
+        "australia/perth" => 480,
+        "australia/sydney" => 600,
+        "pacific/auckland" => 720,
+        _ => return None,
+    };
+    Some(minutes)
+}
+
 fn parse_offset(s: &str) -> Result<i32, ParseError> {
     if s.eq_ignore_ascii_case("z") {
         return Ok(0);
+    }
+
+    if s.contains('/') {
+        return iana_offset_minutes(&s.to_ascii_lowercase())
+            .ok_or_else(|| ParseError::BadOffset(s.to_string()));
     }
 
     if s.chars().all(|c| c.is_ascii_alphabetic()) {
@@ -709,6 +762,43 @@ mod tests {
         assert_eq!(
             normalize_line_to_utc("2024-01-05T9:30:00 PM -05:00").unwrap(),
             "2024-01-06T02:30:00Z"
+        );
+    }
+
+    #[test]
+    fn iana_zone_name_is_converted_to_fixed_offset() {
+        assert_eq!(
+            normalize_line("2024-01-05T09:30:00 America/New_York").unwrap(),
+            "2024-01-05T09:30:00-05:00"
+        );
+    }
+
+    #[test]
+    fn iana_zone_name_is_case_insensitive() {
+        assert_eq!(
+            normalize_line("2024-01-05T09:30:00 america/new_york").unwrap(),
+            "2024-01-05T09:30:00-05:00"
+        );
+    }
+
+    #[test]
+    fn iana_zone_name_is_not_mistaken_for_am_marker() {
+        assert_eq!(
+            normalize_line("2024-01-05T09:30:00 Asia/Kolkata").unwrap(),
+            "2024-01-05T09:30:00+05:30"
+        );
+    }
+
+    #[test]
+    fn unknown_iana_zone_name_is_an_error() {
+        assert!(normalize_line("2024-01-05T09:30:00 Mars/Cydonia").is_err());
+    }
+
+    #[test]
+    fn to_utc_converts_iana_zone_names_too() {
+        assert_eq!(
+            normalize_line_to_utc("2024-01-05T09:30:00 Europe/Paris").unwrap(),
+            "2024-01-05T08:30:00Z"
         );
     }
 }
